@@ -1,0 +1,21 @@
+{
+    "auto.create": "true",
+    "auto.evolve": "true",
+    "connection.password": "admin",
+    "connection.url": "jdbc:postgresql://postgres-4:5432/postgres",
+    "connection.user": "admin",
+    "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+    "delete.enabled": "false",
+    "dialect.name": "PostgreSqlDatabaseDialect",
+    "errors.deadletterqueue.context.headers.enable": "true",
+    "errors.deadletterqueue.topic.name": "topic2-dlq",
+    "errors.deadletterqueue.topic.replication.factor": "1",
+    "errors.log.enable": "true",
+    "errors.log.include.messages": "true",
+    "header.converter": "org.apache.kafka.connect.storage.SimpleHeaderConverter",
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "name": "topic2",
+    "pk.mode": "kafka",
+    "topics.regex": "__TOPICS_REGEX_PLACEHOLDER",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter"
+}

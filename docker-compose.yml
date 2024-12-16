@@ -1,0 +1,201 @@
+version: '3.7'
+name: redpanda-s3-connect
+volumes:
+  redpanda: null
+  postgres4:
+services:
+  postgres-4:
+    container_name: postgres_container_4
+    image: postgres
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      PGDATA: /data/postgres
+    volumes:
+       - postgres4:/data/postgres
+    ports:
+      - "5434:5432"
+    restart: unless-stopped
+
+
+  console:
+    image: docker.redpanda.com/redpandadata/console:v2.5.2
+    entrypoint: /bin/sh
+    command: -c "echo \"$$CONSOLE_CONFIG_FILE\" > /tmp/config.yml; /app/console"
+    environment:
+      CONFIG_FILEPATH: /tmp/config.yml
+      CONSOLE_CONFIG_FILE: |
+        kafka:
+          brokers: ["redpanda:9092"]
+          schemaRegistry:
+            enabled: true
+            urls: ["http://redpanda:8081"]
+        redpanda:
+          adminApi:
+            enabled: true
+            urls: ["http://redpanda:9644"]
+        connect:
+          enabled: true
+          clusters:        
+            - name: local-connect-cluster
+              url: http://connect:8083
+    ports:
+      - 8080:8080
+    depends_on:
+      - redpanda
+
+
+  connect:
+    image: cnfldemos/cp-server-connect-datagen:0.5.0-6.2.0
+    hostname: connect
+    container_name: docker-kafka-connect
+    # networks:
+    #   - test-net
+    # platform: 'linux/amd64'
+    depends_on:
+      - redpanda
+    ports:
+      - "8085:8085"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: redpanda:9092
+      CONNECT_GROUP_ID: "price-kafka-mongo-log-events"
+      CONNECT_CONFIG_STORAGE_TOPIC: "price-kafka-mongo-log-events-config"
+      CONNECT_OFFSET_STORAGE_TOPIC: "price-kafka-mongo-log-events-offsets"
+      CONNECT_STATUS_STORAGE_TOPIC: "price-kafka-mongo-log-events-status"
+      CONNECT_REPLICATION_FACTOR: 1
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.storage.StringConverter"
+      CONNECT_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      # CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://redpanda-0:18081
+      # CONNECT_VALUE_CONVERTER_BASIC_AUTH_CREDENTIALS_SOURCE: $BASIC_AUTH_CREDENTIALS_SOURCE
+      # CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_BASIC_AUTH_USER_INFO: $SCHEMA_REGISTRY_BASIC_AUTH_USER_INFO
+      CONNECT_REST_ADVERTISED_HOST_NAME: "connect"
+      CONNECT_LISTENERS: http://0.0.0.0:8083
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components"
+    command:
+      - bash 
+      - -c 
+      - |
+        #
+        echo "Installing connector plugins"
+        confluent-hub install --no-prompt mongodb/kafka-connect-mongodb:latest
+        confluent-hub install --no-prompt confluentinc/kafka-connect-jdbc:10.0.0
+        #
+        echo "Launching Kafka Connect worker"
+        /etc/confluent/docker/run & 
+        #
+        echo "Waiting for Kafka Connect to start listening on localhost ⏳"
+        while : ; do
+          curl_status=$$(curl -s -o /dev/null -w %{http_code} http://localhost:8083/connectors)
+          echo -e $$(date) " Kafka Connect listener HTTP state: " $$curl_status " (waiting for 200)"
+          if [ $$curl_status -eq 200 ] ; then
+            break
+          fi
+          sleep 5 
+        done
+        echo -e "\n--\n+> Creating connector"
+        # curl -s -X PUT -H  "Content-Type:application/json" http://localhost:8083/connectors/mongo-connector/config \
+        #     -d '{
+        #       [… connector JSON config goes here …]
+        # }'
+        sleep infinity
+
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v23.2.21
+    command:
+      - redpanda start
+      - --smp 1
+      - --overprovisioned
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      # Address the broker advertises to clients that connect to the Kafka API.
+      # Use the internal addresses to connect to the Redpanda brokers
+      # from inside the same Docker network.
+      # Use the external addresses to connect to the Redpanda brokers
+      # from outside the Docker network.
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      # Address the broker advertises to clients that connect to the HTTP Proxy.
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      # Redpanda brokers use the RPC API to communicate with each other internally.
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --mode dev-container
+    ports:
+      - 18081:18081
+      - 18082:18082
+      - 19092:19092
+      - 19644:9644
+    volumes:
+      - redpanda:/var/lib/redpanda/data
+    # networks:
+    #   - redpanda_network
+
+
+
+# curl --location --request PUT 'http://localhost:8083/connectors/postgresql-sink-connector/config' \
+# --header 'Content-Type: application/json' \
+# --data '{
+#     "name": "postgresql-sink-connector",
+#     "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+#     "connection.url": "jdbc:postgresql://postgres-4:5432/postgres",
+#     "connection.user": "admin",
+#     "connection.password": "admin",
+#     "topics": "banggia-ahihi",
+#     "insert.mode": "upsert",
+#     "auto.create": "true",
+#     "auto.evolve": "true",
+#     "pk.mode": "record_value",
+#     "pk.fields": "id",
+#     "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+#     "value.converter.schemas.enable": "false",
+#     "tasks.max": "3"
+# }'
+
+
+# {
+#     "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+#     "name": "banggia-postgresql-sink-connector",
+#     "tasks.max": "3",
+#     "key.converter": "org.apache.kafka.connect.converters.ByteArrayConverter",
+#     "topics": "banggia-ahihi",
+#     "value.converter": "org.apache.kafka.connect.converters.ByteArrayConverter",
+#     "header.converter": "org.apache.kafka.connect.storage.SimpleHeaderConverter",
+#     "connection.url": "jdbc:postgresql://po:5432/sample",
+#     "connection.user": "admin",
+#     "connection.password": "admin",
+#     "pk.mode": "record_key",
+#     "delete.enabled": false,
+#     "trim.sensitive.log": false,
+#     "auto.create": false,
+#     "auto.evolve": false,
+#     "mssql.use.merge.holdlock": true,
+#     "errors.log.enable": false,
+#     "errors.log.include.messages": false,
+#     "errors.deadletterqueue.context.headers.enable": false
+# }
+
+
+# {
+#     "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+#     "name": "abcd",
+#     "key.converter": "org.apache.kafka.connect.converters.ByteArrayConverter",
+#     "value.converter": "org.apache.kafka.connect.converters.ByteArrayConverter",
+#     "header.converter": "org.apache.kafka.connect.storage.SimpleHeaderConverter",
+#     "connection.url": "jdbc:postgresql://localhost:5434/postgres",
+#     "connection.user": "admin",
+#     "connection.password": "admin",
+#     "delete.enabled": false,
+#     "trim.sensitive.log": false,
+#     "auto.create": false,
+#     "auto.evolve": false,
+#     "mssql.use.merge.holdlock": true,
+#     "errors.log.enable": false,
+#     "errors.log.include.messages": false,
+#     "errors.deadletterqueue.context.headers.enable": false,
+#     "pk.mode": "none",
+#     "insert.mode": "insert"
+# }
